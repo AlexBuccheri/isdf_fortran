@@ -1,0 +1,11 @@
+{
+    "cmake.configureOnOpen": false,
+    "files.exclude": {
+        "**/*.mod": true,
+        "**/*.o": true
+      },
+      "cSpell.words": [
+        "ctest",
+        "Fortuno"
+      ]
+}

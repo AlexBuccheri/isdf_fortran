@@ -1,0 +1,9 @@
+# Build directories
+/cmake-build*
+/serial-*
+# VS Code files
+*.mod 
+# Jetbrains files
+/.idea
+# Fortran outputs i.e. write(101, *) ...
+fort.*
