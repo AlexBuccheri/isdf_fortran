@@ -104,6 +104,7 @@ target_link_libraries(isdf_fortran PRIVATE OpenMP::OpenMP_Fortran ${MPI_Fortran_
 target_sources(isdf_fortran PUBLIC
        src/isdf_m.F90
        src/maths_m.f90
+       src/face_splitting_m.F90
        )
 
 # Fortuno wrapper layer
@@ -127,6 +128,11 @@ enable_testing()
 #  Library unit tests
 # -------------------------------
 
-add_executable(test_isdf tests/test_isdf_m.F90)
-target_link_libraries(test_isdf PRIVATE isdf_fortran fortuno_wrapper common_options) 
-add_test(NAME test_stub COMMAND test_isdf)
+# TODO See if I can execute/register different subroutines within the same test module
+add_executable(test_face_splitting tests/test_face_splitting_m.F90)
+target_link_libraries(test_face_splitting PRIVATE isdf_fortran fortuno_wrapper common_options) 
+add_test(NAME face_splitting COMMAND test_face_splitting)
+
+# add_executable(test_isdf tests/test_isdf_m.F90)
+# target_link_libraries(test_isdf PRIVATE isdf_fortran fortuno_wrapper common_options) 
+# add_test(NAME test_stub COMMAND test_isdf)
