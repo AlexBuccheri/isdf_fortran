@@ -23,15 +23,14 @@ ctest --test-dir ./cmake-build-debug --output-on-failure
 ## TODOs
 
 * Make my k-means clustering repo a submodule of this
-  
+* Create some mock states - output from my python module
+
 ### Serial
 
-* Construction of $P^phi$
-* Construction of (CC^T)^-1
-* Element-wise product $P^phi$ . $P^psi$ . (CC^T)^-1
-* Face-splitting product
-* Mocking of some one-particle states
-  
+* Write construction of `P` matrix
+* Write construction of `(CC^T)^-1` matrix
+* Write `construct_interpolation_vectors`, using `P` and `(CC^T)^-1` matrices
+
 ### MPI
 
 * Consideration of algorithms for state and domain distribution
