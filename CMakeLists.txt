@@ -98,11 +98,12 @@ set_target_properties(isdf_fortran
         )
 
 # Linked libraries
-target_link_libraries(isdf_fortran PRIVATE OpenMP::OpenMP_Fortran ${MPI_Fortran_LIBRARIES} BLAS::BLAS common_options)
+# TODO(Alex) If private, isdf_serial_m does not link to BLAS, for example (I find this strange =? misunderstand public/private?)
+target_link_libraries(isdf_fortran PUBLIC OpenMP::OpenMP_Fortran ${MPI_Fortran_LIBRARIES} BLAS::BLAS common_options)
 
 # Source code
 target_sources(isdf_fortran PUBLIC
-       src/isdf_m.F90
+       src/isdf_serial_m.F90
        src/maths_m.f90
        src/face_splitting_m.F90
        )
@@ -133,6 +134,3 @@ add_executable(test_face_splitting tests/test_face_splitting_m.F90)
 target_link_libraries(test_face_splitting PRIVATE isdf_fortran fortuno_wrapper common_options) 
 add_test(NAME face_splitting COMMAND test_face_splitting)
 
-# add_executable(test_isdf tests/test_isdf_m.F90)
-# target_link_libraries(test_isdf PRIVATE isdf_fortran fortuno_wrapper common_options) 
-# add_test(NAME test_stub COMMAND test_isdf)
