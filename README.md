@@ -10,6 +10,12 @@ cmake --build serial-cmake-build-debug
 ctest --test-dir ./serial-cmake-build-debug --output-on-failure
 ```
 
+Run the app test:
+
+```shell
+./serial-cmake-build-debug/run_isdf_serial
+```
+
 ## MPI
 
 MPI is OFF by default
@@ -19,6 +25,13 @@ cmake --fresh -B cmake-build-debug -DCMAKE_BUILD_TYPE=Debug -DMPI=On
 cmake --build cmake-build-debug
 ctest --test-dir ./cmake-build-debug --output-on-failure
 ```
+
+Run the app test:
+
+```shell
+mpirun -np 1 cmake-build-debug/run_isdf_serial
+```
+
 
 ## TODOs
 
