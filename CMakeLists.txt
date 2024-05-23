@@ -136,6 +136,11 @@ target_link_libraries(test_face_splitting PRIVATE isdf_fortran fortuno_wrapper c
 add_test(NAME test_face_splitting_product_two_funcs COMMAND test_face_splitting "Face-splitting of two products")
 add_test(NAME test_face_splitting_product_one_func COMMAND test_face_splitting "Face-splitting of the product of one matrix")
 
+add_executable(test_maths tests/test_maths_m.F90)
+target_link_libraries(test_maths PRIVATE isdf_fortran fortuno_wrapper common_flags) 
+add_test(NAME test_gram_schmidt COMMAND test_maths "Gram-Schmidt orthogonalisation")
+
+
 # Application tests
 add_executable(run_isdf_serial regression_tests/run_isdf_serial.F90)
 target_link_libraries(run_isdf_serial PRIVATE 

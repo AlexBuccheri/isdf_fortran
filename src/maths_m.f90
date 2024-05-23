@@ -4,7 +4,7 @@ module maths_m
     private
 
     ! Exposed routines and functions
-    public :: close, all_close, pseudo_inv, svd
+    public :: close, all_close, pseudo_inv, svd, gram_schmidt
 
     interface all_close
         module procedure :: all_close_real64_1d, all_close_real64_2d
@@ -179,5 +179,61 @@ contains
         deallocate(work)
     
       end subroutine svd
+
+
+      !>@brief Sum of the projection of vector v_i onto a set of vectors {u}.
+      subroutine summed_projection(v, u, v_index, proj)
+        real(dp), intent(in), contiguous :: v(:)
+        real(dp), intent(in), contiguous :: u(:, :)
+        integer,  intent(in) :: v_index
+        real(dp), intent(out) :: proj(:)
+
+        integer :: i
+
+        ! Assumes U in [1, v_index - 1] are normalised in the caller
+        ! TODO(Alex) See if I can replace the dot product with blas
+        ! TODO(Alex) Consider OMP parallelisation
+        proj = dot_product(v, u(:, 1)) * u(:, 1)
+
+        do i = 2, v_index - 1
+            proj = proj + dot_product(v, u(:, i)) * u(:, i)
+        enddo
+
+      end subroutine summed_projection
+
+
+      !>@brief Orthogonalisation of column vectors with classic Gram-Schmidt.
+      !! 
+      !! TODO Add expressions
+      !!
+      !! Note, classic Gram Schmidt cannot handle linearly-dependent vectors.
+      !! The routine will silently return the wrong answer. It is the caller''s
+      !! responsibility to check for linearly-dependent vectors.
+      subroutine gram_schmidt(v)
+        real(dp), intent(inout), contiguous :: v(:, :) !< In: Array of column vectors
+        !                                                Out: Orthogonalised column vectors
+        integer  :: m, n_vectors, i
+        real(dp) :: norm
+        real(dp), allocatable :: proj(:)
+
+        m = size(v, 1)
+        n_vectors = size(v, 2)
+        allocate(proj(m))
+
+        ! TODO(Alex) See if I can replace norm call with blas
+        norm = norm2(v(:, 1))
+        call dscal(m, 1._dp / norm, v(:, 1), 1)
+
+        do i = 2, n_vectors
+            call summed_projection(v(:, i), v, i, proj)
+            ! v(:, i) = v(:, i) - proj(:)
+            call daxpy(m, -1._dp, proj, 1, v(:, i), 1)
+            norm = norm2(v(:, i))
+            ! Do not attempt to handle linearly-dependent vectors
+            if (close(norm, 0._dp)) cycle
+            call dscal(m, 1._dp / norm, v(:, i), 1)
+        enddo
+
+      end subroutine gram_schmidt
 
 end module maths_m
