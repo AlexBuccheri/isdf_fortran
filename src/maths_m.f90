@@ -4,7 +4,7 @@ module maths_m
     private
 
     ! Exposed routines and functions
-    public :: close, all_close, pseudo_inv, svd, gram_schmidt
+    public :: close, all_close, pseudo_inv, svd, gram_schmidt, modified_gram_schmidt
 
     interface all_close
         module procedure :: all_close_real64_1d, all_close_real64_2d
@@ -201,14 +201,18 @@ contains
 
       end subroutine summed_projection
 
+      ! Fastest way to test with python
+      ! def gram_schmidt_columns(X):
+      !    Q, R = np.linalg.qr(X)
+      !    return Q  # Q = Orthogonalised X
 
       !>@brief Orthogonalisation of column vectors with classic Gram-Schmidt.
       !! 
       !! TODO Add expressions
       !!
       !! Note, classic Gram Schmidt cannot handle linearly-dependent vectors.
-      !! The routine will silently return the wrong answer. It is the caller''s
-      !! responsibility to check for linearly-dependent vectors.
+      !! The routine will silently return zeros for corresponding vectors. 
+      !! It is the caller''s responsibility to check for linearly-dependent vectors.
       subroutine gram_schmidt(v)
         real(dp), intent(inout), contiguous :: v(:, :) !< In: Array of column vectors
         !                                                Out: Orthogonalised column vectors
@@ -229,11 +233,47 @@ contains
             ! v(:, i) = v(:, i) - proj(:)
             call daxpy(m, -1._dp, proj, 1, v(:, i), 1)
             norm = norm2(v(:, i))
-            ! Do not attempt to handle linearly-dependent vectors
-            if (close(norm, 0._dp)) cycle
+            ! Handle linearly-dependent vectors
+            if (close(norm, 0._dp)) then
+                v(:, i) = 0._dp
+            endif
             call dscal(m, 1._dp / norm, v(:, i), 1)
         enddo
 
       end subroutine gram_schmidt
+
+
+      !> @brief Orthogonalisation of column vectors with modified Gram-Schmidt.
+      !!
+      !! The projection of each vector v(:,j) is subtracted from only the remaining vectors 
+      !! (v(:,j+1) to v(:,n)). This orthogonalizes the remaining vectors with respect to the 
+      !! newly orthogonalized v(:,j), and results in a more numerically stable algorithm than the 
+      !! classical version, especially for ill-conditioned matrices.
+      !! 
+      !! Also see https://laurenthoeltgen.name/post/gram-schmidt/
+      subroutine modified_gram_schmidt(v)
+        real(dp), intent(inout), contiguous :: v(:, :) !< In: Array of column vectors
+
+        integer  :: n_vectors, m, i, j
+        real(dp) :: norm
+
+        m = size(v, 1)
+        n_vectors = size(v, 2)
+    
+        do j = 1, n_vectors
+            norm = norm2(v(:, j))
+            ! Handle linearly-dependent vectors
+            if (close(norm, 0._dp)) then
+                v(:, j) = 0._dp
+                cycle
+            endif
+            call dscal(m, 1._dp / norm, v(:, j), 1)
+            do i = j + 1, n_vectors
+                v(:, i) = v(:, i) - dot_product(v(:, j), v(:, i)) * v(:, j)
+            enddo
+        enddo
+
+      end subroutine modified_gram_schmidt
+
 
 end module maths_m
