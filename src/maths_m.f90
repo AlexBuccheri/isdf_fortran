@@ -253,7 +253,7 @@ contains
       !! Also see https://laurenthoeltgen.name/post/gram-schmidt/
       subroutine modified_gram_schmidt(v)
         real(dp), intent(inout), contiguous :: v(:, :) !< In: Array of column vectors
-
+        !                                                Out: Orthogonalised column vectors
         integer  :: n_vectors, m, i, j
         real(dp) :: norm
 
