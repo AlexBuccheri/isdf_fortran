@@ -3,7 +3,7 @@ module interpolation_points_m
     use, intrinsic :: iso_fortran_env
 
     use face_splitting_m, only: face_splitting_product, face_splitting_product_two_funcs_colwise
-    use maths_m,          only: modified_gram_schmidt
+    use maths_m,          only: modified_gram_schmidt, gram_schmidt, all_close
     implicit none
     private
     public :: subsample_transpose_product_matrix
@@ -13,14 +13,16 @@ contains
     !> @brief Generate an orthogonalised 2D matrix of random numbers, sampled from a 
     !! Gaussian distribution
     subroutine orthogonalisd_gaussian_matrix(gaussian, seed)
-        real(real64), intent(out)    :: gaussian(:, :)
+        real(real64), contiguous, intent(out)    :: gaussian(:, :)
         integer, intent(in), optional :: seed(:)
+        logical :: check_orthogonal
 
         integer :: i, j, n, m
         real(real64) :: random_num
+        real(real64), allocatable :: m_orth(:, :), eye(:, :)
 
         n = size(gaussian, 1)
-        m = size(gaussian, 1)
+        m = size(gaussian, 2)
 
         if (present(seed)) then
             call random_seed(put=seed)
@@ -39,10 +41,58 @@ contains
         enddo
 
         ! Orthogonalise columns of gaussian
-        call modified_gram_schmidt(gaussian)
+        !call modified_gram_schmidt(gaussian)
+        !write(*, *) 'Gaussian columns orthogonalised'
+
+        ! -------------------------------------------------------------------
+        ! Check it is orthogonalised
+        ! NOTE: Many of the random number columns can be linearly
+        ! dependent, meaning that the returned vectors will be zeroed
+        ! and this check will fail
+        ! -------------------------------------------------------------------
+        check_orthogonal = .false.
+
+        if (check_orthogonal) then
+            allocate(m_orth(m, m))
+            ! m_orth = matmul(transpose(gaussian), gaussian)
+            call dgemm('T', 'N', &
+                size(gaussian, 2), &   ! Rows of op(A): cols of A
+                size(m_orth, 2), &   ! Cols of op(B) OR cols of op(C): Cols of B^T OR cols of C.
+                size(gaussian, 1), &   ! Cols of op(A) = rows of A
+                1._real64, &       
+                gaussian, size(gaussian, 1), &   ! Rows of A, as declared
+                gaussian, size(gaussian, 1), &   ! Rows of B, as declared
+                0._real64, &
+                m_orth, m & ! Rows of C
+            )
+
+            allocate(eye(m, m), source=0._real64)
+            do i = 1, m
+                eye(i, i) = 1._real64
+            enddo
+
+            if (.not. all_close(m_orth, eye)) then
+                write(*, *) 'Randomised Gaussian matrix columns not orthogonalised'
+                do i = 1, m
+                    write(*, *) 'Column', i
+                    write(*, *) m_orth(:, i)
+                enddo
+            endif
+        endif
 
     end subroutine orthogonalisd_gaussian_matrix
 
+
+    !> @bried Randomly sample the product matrix using Gaussian test matrices.
+    !!
+    !!\f[
+    !!    \tilde{Z}_{\alpha, \beta} = \left( \sum^m_{i=1} \phi_i(\mathbf{r}) G^{\phi}_{i, \alpha} \right)
+    !!                                \left( \sum^m_{i=1} \phi_i(\mathbf{r}) G^{\phi}_{i, \beta} \right)
+    !! \f]
+    !!
+    !! Implemented according to eq. 20 of "Interpolative Separable Density Fitting Decomposition for
+    !! Accelerating Hybrid Density Functional Calculations with Applications to Defects in Silicon"
+    !! J. Chem. Theory Comput. 2017, 13, 5420-5431
 
     !> @brief Randomly sample the transpose of the product matrix
     !!
@@ -57,10 +107,10 @@ contains
         real(real64), intent(out), allocatable :: zt_subspace(:, :)
         integer,      intent(in), optional     :: random_seed(:)
 
-        real(real64), allocatable :: G1(:, :), G_phi(:, :), z_subspace(:, :)
+        real(real64), allocatable :: G1(:, :), G_phi(:, :)
         integer :: np, m_states, p
 
-        ! Dimensions
+        ! Dimensions. 
         m_states = size(phi, 1)
         np = size(phi, 2)
         p = nint(sqrt(real(n_interp, kind=real64)))
@@ -69,7 +119,7 @@ contains
         allocate(G1(p, m_states))
         call orthogonalisd_gaussian_matrix(G1, random_seed)
 
-        ! Sanity check for shape of phi
+        ! Sanity check for shape of phi. Expect phi (m_states, np)
         if (np < m_states) then
             write(*, *) 'Number of states is < n grid points. Might have phi allocated incorrectly'
             write(*, *) 'm_states, np:', m_states, np
@@ -97,19 +147,11 @@ contains
         allocate(zt_subspace(n_interp, np))
         call face_splitting_product_two_funcs_colwise(phi, zt_subspace)
 
+
     end subroutine subsample_transpose_product_matrix
 
 
-    !> @bried Randomly sample the product matrix using Gaussian test matrices.
-    !!
-    !!\f[
-    !!    \tilde{Z}_{\alpha, \beta} = \left( \sum^m_{i=1} \phi_i(\mathbf{r}) G^{\phi}_{i, \alpha} \right)
-    !!                                \left( \sum^m_{i=1} \phi_i(\mathbf{r}) G^{\phi}_{i, \beta} \right)
-    !! \f]
-    !!
-    !! Implemented according to eq. 20 of "Interpolative Separable Density Fitting Decomposition for
-    !! Accelerating Hybrid Density Functional Calculations with Applications to Defects in Silicon"
-    !! J. Chem. Theory Comput. 2017, 13, 5420-5431
+
 
 
 end module interpolation_points_m
