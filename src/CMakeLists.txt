@@ -5,6 +5,7 @@ target_sources(isdf_fortran PRIVATE
        parse.f90
        sampling_m.f90
        interpolation_points_m.F90
+       lapack_drivers_m.F90
        )
 
 target_sources(fortuno_wrapper PRIVATE
