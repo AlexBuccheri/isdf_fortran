@@ -5,12 +5,7 @@ module parse
 
     integer, parameter :: new_line_char = 10  !< ASCII
 
-    public :: write_to_xyz, output_cube, parse_grid_from_c
-
-    interface parse_grid_from_c
-        module procedure :: parse_grid_1d_from_c, parse_grid_2d_from_c
-    end interface
-
+    public :: write_to_xyz, output_cube, parse_grid_1d_from_c, parse_grid_2d_from_c
 
 contains
     
@@ -76,9 +71,10 @@ contains
     end subroutine parse_grid_1d_from_c
 
 
-    subroutine parse_grid_2d_from_c(fname, data)
-        character(len=*), intent(in) :: fname
-        real(real64), allocatable, intent(out) :: data(:, :)
+    subroutine parse_grid_2d_from_c(fname, packed, data)
+        character(len=*), intent(in) :: fname   !< File name
+        logical                      :: packed  !< Octopus convention. If packed, (istate, ip), Not packed (ip, istate)
+        real(real64), allocatable, intent(out) :: data(:, :)  !< Function/s on grid
 
         character(len=1) :: dummy
         integer :: n_dim, nx, ny, nz, ierr, ix, iy, iz
@@ -91,23 +87,40 @@ contains
             stop
         end if
 
-        ! Parse shape from the header
+        ! Parse shape from the header. NOTE, this is order is a hard-coded convention
         ! Expect 3D grid
         read(101, *) dummy, nx, ny, nz, n_dim
 
-        allocate(tmp(n_dim, nx, ny, nz))
+        if (packed) then
+            allocate(tmp(nx, ny, nz, n_dim))
 
-        ! C-style memory access so the order is consistent in fortran
-        do ix = 1, nx
-            do iy = 1, ny
-                do iz = 1, nz
-                    read(101, *) tmp(:, ix, iy, iz)
+            ! C-style memory access so the order is consistent in fortran
+            do ix = 1, nx
+                do iy = 1, ny
+                    do iz = 1, nz
+                        read(101, *) tmp(ix, iy, iz, :)
+                    enddo
                 enddo
             enddo
-        enddo
-        close(101)
+            close(101)
 
-        data = reshape(tmp, [n_dim, (nx * ny * nz)])
+            data = reshape(tmp, [(nx * ny * nz), n_dim])
+        else
+            allocate(tmp(n_dim, nx, ny, nz))
+
+            ! C-style memory access so the order is consistent in fortran
+            do ix = 1, nx
+                do iy = 1, ny
+                    do iz = 1, nz
+                        read(101, *) tmp(:, ix, iy, iz)
+                    enddo
+                enddo
+            enddo
+            close(101)
+
+            data = reshape(tmp, [n_dim, (nx * ny * nz)])
+        endif
+        deallocate(tmp)
 
     end subroutine parse_grid_2d_from_c
 
