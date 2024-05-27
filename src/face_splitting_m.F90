@@ -15,6 +15,8 @@ module face_splitting_m
 
 contains
 
+    ! TODO(Alex) Unify the naming convention. In this case, retain separate routines and overload the interface?
+
     !> @brief Face-splitting Product. Create products of KS wave functions on a real-space grid.
     !!
     !! See [wikipedia](https://en.wikipedia.org/wiki/Khatri–Rao_product#Face-splitting_product) entry and associated
@@ -109,17 +111,19 @@ contains
     end subroutine face_splitting_product_two_funcs_rowwise
 
 
+    ! TODO(Alex) RENAME THIS
     !> @brief Face-splitting Product. Create products of KS wave functions on a real-space grid.
     !!
     !! This type of operation is a column-by-column Kronecker products of two matrices.
     !! Use this routine if phi and psi have shape (n_states, n_grid) and (m_states, n_grid), respectively, 
     !! and one wishes to return a product of shape (n_states * m_states, n_grid).
-    subroutine face_splitting_product_two_funcs_colwise(phi, psi, z)
-        real(dp), intent(in)  :: phi(:, :)                !< Set of wave functions on a real-space grid
-        real(dp), intent(in)  :: psi(:, :)                !< Second set of wave functions on a real-space grid
+    subroutine face_splitting_product_two_funcs_colwise(phi, z, psi)
+        real(dp), intent(in), contiguous, target  :: phi(:, :)           !< Set of wave functions on a real-space grid
+        real(dp), intent(in), contiguous, optional, target :: psi(:, :)  !< Second set of wave functions on a real-space grid
         real(dp), allocatable, intent(out) :: z(:, :)     !< Face-split product
 
         integer  :: icol, irow, ncol, nrow, mrow
+        real(dp), pointer :: psi_(:, :)
 
         ! Declarations specific to first implementation
         ! integer  :: jrow, ij
@@ -129,13 +133,21 @@ contains
         integer  :: ij_start, ij_end
         real(dp), allocatable :: psi_column(:)
 
-        if (all(shape(psi) /= shape(phi))) then
-            write(*, *) 'Shape of first argument does not matcht the shape of the second'
+        if (present(psi)) then
+            psi_ => psi
+        else
+            psi_ => phi
+        endif
+
+        if (all(shape(psi_) /= shape(phi))) then
+            write(*, *) 'Shape of first argument does not match the shape of the second'
+            write(*, *) 'shape(phi)', shape(phi)
+            write(*, *) 'shape(psi)', shape(psi_)
             error stop
         endif
 
         nrow = size(phi, 1)
-        mrow = size(psi, 1)
+        mrow = size(psi_, 1)
         ncol = size(phi, 2)
         allocate(z(nrow * mrow, ncol))
 
@@ -147,7 +159,7 @@ contains
         !         phi_element = phi(irow, icol)
         !         do jrow = 1, mrow
         !             ij = ij + 1
-        !             z(ij, icol) = phi_element * psi(jrow, icol)
+        !             z(ij, icol) = phi_element * psi_(jrow, icol)
         !         enddo
         !     enddo
         ! enddo
@@ -155,7 +167,7 @@ contains
         ! Implementation with 2 loops
         allocate(psi_column(mrow))
         do icol = 1, ncol
-            psi_column = psi(:, icol)
+            psi_column = psi_(:, icol)
             ! Kroneckor product on two column vectors
             do irow = 1, nrow
                 ij_start = 1 + (irow - 1) * mrow
