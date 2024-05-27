@@ -91,7 +91,7 @@ contains
         ! Expect 3D grid
         read(101, *) dummy, nx, ny, nz, n_dim
 
-        if (packed) then
+        if (.not. packed) then
             allocate(tmp(nx, ny, nz, n_dim))
 
             ! C-style memory access so the order is consistent in fortran

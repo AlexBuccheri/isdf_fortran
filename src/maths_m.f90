@@ -245,6 +245,10 @@ contains
 
       ! TODO(Alex) See if I can replace norm call with blas
       norm = norm2(v(:, 1))
+      if(close(norm, 0._dp)) then
+         write(*, *)'Norm of the first vector is < 1.e-8'
+         error stop
+      endif
       call dscal(m, 1._dp/norm, v(:, 1), 1)
 
       do i = 2, n_vectors
@@ -253,7 +257,7 @@ contains
          call daxpy(m, -1._dp, proj, 1, v(:, i), 1)
          norm = norm2(v(:, i))
          ! Handle linearly-dependent vectors
-         if (close (norm, 0._dp)) then
+         if (close(norm, 0._dp)) then
             v(:, i) = 0._dp
          end if
          call dscal(m, 1._dp/norm, v(:, i), 1)
@@ -270,19 +274,24 @@ contains
    !! classical version, especially for ill-conditioned matrices.
    !!
    !! Also see https://laurenthoeltgen.name/post/gram-schmidt/
-   subroutine modified_gram_schmidt(v)
+   subroutine modified_gram_schmidt(v, verbose)
       real(dp), intent(inout), contiguous :: v(:, :) !< In: Array of column vectors
       !                                                Out: Orthogonalised column vectors
+      logical, intent(in), optional :: verbose
+      logical  :: print_out
       integer  :: n_vectors, m, i, j
       real(dp) :: norm
 
       m = size(v, 1)
       n_vectors = size(v, 2)
+      print_out = .false.
+      if(present(verbose)) print_out = verbose
 
       do j = 1, n_vectors
          norm = norm2(v(:, j))
          ! Handle linearly-dependent vectors
          if (close (norm, 0._dp)) then
+            if(print_out) write(*, *) 'Vector j is linearly-dependent, hence zeroed', j
             v(:, j) = 0._dp
             cycle
          end if
