@@ -59,7 +59,7 @@ contains
 
         ! Second routine. Expects the inputs of shape (n_states, n_points) and (m_states, n_points), respectively
         ! Performs the kronecker product on the first dimension
-        call face_splitting_product_two_funcs_colwise(transpose(c), transpose(d), z)
+        call face_splitting_product_two_funcs_colwise(transpose(c), z, transpose(d))
         call check(size(z, 1) == 9, msg='Nnmber of rows of Z = product of N rows of c and d')
         call check(size(z, 2) == 3, msg='Number of columns of Z consistent with N cols of c and d')
         ! As such, expect the returned Z to be the transpose of what would expect if performing the kronecker
