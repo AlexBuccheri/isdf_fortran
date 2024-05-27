@@ -68,7 +68,7 @@ program run_isdf_serial
 
     ! Parse grid and density from benzene example
     ! Units of Bohr and (e/Bohr^3), respectively
-    call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/grid.out", .false., grid)
+    call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/grid.out", .true., grid)
     call parse_grid_1d_from_c(trim(root) // "/regression_tests/input/density.out", rho)
 
     ! Output to visualise
@@ -131,6 +131,10 @@ program run_isdf_serial
         write(*, *) 'Compute optimal interpolation points using QR decomposition'
         ! 32 = sqrt(np) 
         n_centroid = 32   
+
+        ! Fix for testing
+        call random_seed(size=min_seed_size)
+        allocate(seed(min_seed_size), source=[(i, i=1, min_seed_size)])
 
         call subsample_transpose_product_matrix(phi, n_centroid, zt_subspace, random_seed=seed)
         allocate(interpolation_indices(n_centroid))

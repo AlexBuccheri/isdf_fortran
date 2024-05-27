@@ -142,7 +142,7 @@ add_test(NAME test_gram_schmidt COMMAND test_maths "Gram-Schmidt orthogonalisati
 
 
 # Application tests
-add_executable(run_isdf_serial regression_tests/src/run_isdf_serial.F90)
+add_executable(run_isdf_serial regression_tests/run_isdf_serial.F90)
 target_link_libraries(run_isdf_serial PRIVATE 
    isdf_fortran kmeans::lib_kmeans 
    $<$<BOOL:${MPI}>:MPI::MPI_Fortran>  
