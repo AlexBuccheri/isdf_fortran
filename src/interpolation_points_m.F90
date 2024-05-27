@@ -2,10 +2,11 @@
 module interpolation_points_m
     use, intrinsic :: iso_fortran_env
 
-    use face_splitting_m, only: face_splitting_product
+    use face_splitting_m, only: face_splitting_product, face_splitting_product_two_funcs_colwise
     use maths_m,          only: modified_gram_schmidt
     implicit none
     private
+    public :: subsample_transpose_product_matrix
 
 contains
 
@@ -42,6 +43,63 @@ contains
 
     end subroutine orthogonalisd_gaussian_matrix
 
+
+    !> @brief Randomly sample the transpose of the product matrix
+    !!
+    !! Construct random Gaussian matrix, with orthogonalised columns. Shape (p, m)
+    !! Pass wave functions in packed form (m, np)
+    !! Contract G and phi matrices to have shape (p, np)
+    !! Construct Z^T as the face-splitting product of (G phi) (G phi), with shape
+    !! (p*p, np), such that one needs to apply products to the rows
+    subroutine subsample_transpose_product_matrix(phi, n_interp, zt_subspace, random_seed)
+        real(real64), intent(in)    :: phi(:, :)   !< Set of KS states, with shape(m_states, np)
+        integer,      intent(inout) :: n_interp    !< Number of interpolation points
+        real(real64), intent(out), allocatable :: zt_subspace(:, :)
+        integer,      intent(in), optional     :: random_seed(:)
+
+        real(real64), allocatable :: G1(:, :), G_phi(:, :), z_subspace(:, :)
+        integer :: np, m_states, p
+
+        ! Dimensions
+        m_states = size(phi, 1)
+        np = size(phi, 2)
+        p = nint(sqrt(real(n_interp, kind=real64)))
+
+        ! Construct random Gaussian matrix, with orthogonalised columns. Shape (p, m)
+        allocate(G1(p, m_states))
+        call orthogonalisd_gaussian_matrix(G1, random_seed)
+
+        ! Sanity check for shape of phi
+        if (np < m_states) then
+            write(*, *) 'Number of states is < n grid points. Might have phi allocated incorrectly'
+            write(*, *) 'm_states, np:', m_states, np
+            error stop
+        endif
+
+        ! Contract G and phi matrices to have shape (p, np): 
+        ! Arrays:  G_phi =     G     phi
+        ! Shapes: (p, np) = (p, m) (m, np)
+        allocate(G_phi(np, p))
+        call dgemm('N', 'N', &
+            p,             &  ! row op(G)
+            np,            &  ! col op(phi)    
+            m_states,      &  ! col op(G)
+            1._real64,     &       
+            G1, p,         &
+            phi, m_states, &
+            0._real64,     &
+            G_phi, np      &
+        )      
+
+        ! Z^T_subspace = Face-splitting product (G_phi) (G_phi) to give shapes:
+        ! (p*p, np) = (p, np) ^ (p, np)
+        n_interp = p * p
+        allocate(zt_subspace(n_interp, np))
+        call face_splitting_product_two_funcs_colwise(phi, zt_subspace)
+
+    end subroutine subsample_transpose_product_matrix
+
+
     !> @bried Randomly sample the product matrix using Gaussian test matrices.
     !!
     !!\f[
@@ -52,93 +110,6 @@ contains
     !! Implemented according to eq. 20 of "Interpolative Separable Density Fitting Decomposition for
     !! Accelerating Hybrid Density Functional Calculations with Applications to Defects in Silicon"
     !! J. Chem. Theory Comput. 2017, 13, 5420-5431
-    subroutine randomly_sample_product_matrix(phi, n_interp, z_subspace, random_seed)
-        real(real64), intent(in)    :: phi(:, :)
-        integer,      intent(inout) :: n_interp    !< Number of interpolation points
-        real(real64), intent(out), allocatable :: z_subspace(:, :)
-        integer,      intent(in), optional     :: random_seed(:)
-
-        real(real64), allocatable :: G1(:, :), A(:, :)
-        integer :: np, m_states, p
-
-        np = size(phi, 1)
-        m_states = size(phi, 2)
-        p = int(sqrt(real(n_interp, kind=real64)))
-        n_interp = p * p
-
-        ! The first index of G1 SHOULD be the state index, however
-        ! as the Gram-Schmidt implementation returns orthogonalised columns, set the columns to
-        ! be the state index, and use the transpose of G1 in the dgemm call
-        allocate(G1(p, m_states))
-        call orthogonalisd_gaussian_matrix(G1, random_seed)
-
-        allocate(A(np, p))
-        call dgemm('N', 'T', &
-            np,           &       ! Row op(phi) i.e. row(phi)
-            p,            &       ! Col op(A) i.e. col(A)
-            m_states,     &       ! Col op(phi) == row op(G1). Use col(phi)
-            1._real64,    &       
-            phi, np,      &       ! Rows of phi, as declared
-            G1, p,        &       ! Rows of G1, as declared
-            0._real64,    &
-            A, np         &       ! Rows of A
-        )        
-        deallocate(G1)
-
-        allocate(z_subspace(np, n_interp))
-        call face_splitting_product(A, z_subspace)
-        deallocate(A)
-
-    end subroutine randomly_sample_product_matrix
-
-    ! https://www.netlib.org/lapack/lug/node42.html
-    ! https://netlib.org/lapack/explore-html/d0/dea/group__geqp3_gae96659507d789266660af28c617ef87f.html#gae96659507d789266660af28c617ef87f
-    ! https://docs.scipy.org/doc/scipy/reference/generated/scipy.linalg.qr.html
-
-    !> @brief Find interpolation points from a subspace of the pair-product matrix,
-    !!  using QR decomposition with pivoting.
-    !!
-    !! pivot determine the rows (check.. columns?) the product-basis matrix, Z, to be used as interpolating points. 
-    !! Note, n_rows should be the same for Z and the z_subspace.
-    subroutine interpolation_points_via_qrpivot(z_subspace, indices)
-        real(real64), intent(inout)  :: z_subspace(:, :)  !<  Sub-sampled pair-product matrix, with shape(n_grid_points, n_interp)
-        integer,      intent(out) :: indices(:)           !<  Interpolation point indices. 
-        
-        integer              :: np, n_interp, info, lwork
-        integer, allocatable :: jpvt(:)
-        real(real64), allocatable :: tau(:), work(:)
-
-        np = size(z_subspace, 1)
-        n_interp = size(z_subspace, 2)
-
-        ! Query the workspace
-        allocate(tau(min(np, n_interp)))
-        allocate(work(1))
-        allocate(jpvt(n_interp), source=0)
-        lwork = -1
-        call dgeqp3(np, n_interp, z_subspace, np, jpvt, tau, work, lwork, info)
-
-        ! Allocate optimal work space
-        lwork = int(work(1))
-        deallocate(work)
-        allocate(work(lwork))
-
-        ! A P = Q R
-        ! Upper triangle of A will contain R
-        ! Below the diagonal, together with tau, represent the orthogonal matrix Q as a 
-        ! product of min(M,N) elementary reflectors.
-        call dgeqp3(np, n_interp, z_subspace, np, jpvt, tau, work, lwork, info)
-        indices = jpvt(1: n_interp)
-
-        ! TODO(Alex) Try and rebuild A from Q R to confirm I understand what the quantities are doing
-        ! Extract R from upper triangle of A
-        ! Extract lower triangle of A into Q.
-        ! Reconstruct Q with something like DORGQR
-        ! A_reconstructed = QR
-        ! Note, this does not account for the pivoting
-    
-
-    end subroutine interpolation_points_via_qrpivot
 
 
 end module interpolation_points_m
