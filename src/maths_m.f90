@@ -12,7 +12,6 @@ module maths_m
 
 contains
 
-
    !> @brief Are \f$x\f$ and \f$y\f$ equal within a tolerance.
    elemental logical function close (x, y, rtol, atol)
       real(dp), intent(in) :: x, y
@@ -259,8 +258,9 @@ contains
          ! Handle linearly-dependent vectors
          if (close(norm, 0._dp)) then
             v(:, i) = 0._dp
+         else
+            call dscal(m, 1._dp/norm, v(:, i), 1)
          end if
-         call dscal(m, 1._dp/norm, v(:, i), 1)
       end do
 
    end subroutine gram_schmidt
@@ -302,6 +302,5 @@ contains
       end do
 
    end subroutine modified_gram_schmidt
-
 
 end module maths_m

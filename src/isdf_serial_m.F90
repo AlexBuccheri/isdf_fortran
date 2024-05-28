@@ -210,6 +210,7 @@ contains
     end subroutine construct_interpolation_vectors
 
 
+    ! TODO(Alex) Could test against a loop implementation
     !> @brief Approximate the product basis using ISDF vectors.
     !!
     !! \f[
