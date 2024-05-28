@@ -10,28 +10,33 @@ program run_isdf_serial
     use kmeans_m, only: weighted_kmeans
 
     ! Internal libs
-    use parse,         only: write_to_xyz, output_cube, parse_grid_1d_from_c, parse_grid_2d_from_c
-    use sampling_m,    only: choose_initial_centroids_simple
+    use face_splitting_m,       only: face_splitting_product
+    use parse,                  only: write_to_xyz, output_cube, parse_grid_1d_from_c, parse_grid_2d_from_c
+    use sampling_m,             only: choose_initial_centroids_simple
     use interpolation_points_m, only: subsample_transpose_product_matrix
-    use lapack_drivers_m, only: qr_decomposition_with_pivot
+    use lapack_drivers_m,       only: qr_decomposition_with_pivot
+    use isdf_serial_m,          only: construct_interpolation_vectors, construct_approximation_product_states
     implicit none
 
+    type(mpi_t),  allocatable :: comm
+    real(real64), parameter :: bohr_to_ang =  0.529177249_real64
+    real(real64), parameter :: ang_to_bohr =  1._real64 / bohr_to_ang
+
+    ! Inputs
+    integer, parameter :: n_states = 22 !< 22 occupied for benzene in minimal basis
     character(len=100) :: root = "/Users/alexanderbuccheri/Codes/isdf_fortran"
     real(real64), allocatable :: grid(:, :)      !< (ndim, np)
     real(real64), allocatable :: phi(:, :)       !< (nstates, np)
     real(real64), allocatable :: rho(:)          !< (np)
     real(real64), allocatable :: centroids(:, :) 
-    type(mpi_t),  allocatable :: comm
     character(len=1)          :: species(12)
-    integer :: an(12)
-    real(real64) :: atomic_pos(3, 12), spacings(3, 3)
-    real(real64), parameter :: bohr_to_ang =  0.529177249_real64
-    real(real64), parameter :: ang_to_bohr =  1._real64 / bohr_to_ang
+    integer                   :: an(12)
+    real(real64)              :: atomic_pos(3, 12), spacings(3, 3)
 
     ! Centroid Generation
     integer                       :: niter, n_centroid, min_seed_size
     real(real64)                  :: centroid_tol = 1.e-6_real64
-    integer,          allocatable :: init_centroid_indices(:), seed(:)
+    integer,          allocatable :: init_centroid_indices(:), centroid_indices(:), seed(:)
     character(len=1), allocatable :: dummy_species(:)
     logical                       :: use_centroids
 
@@ -39,13 +44,21 @@ program run_isdf_serial
     integer,      allocatable :: interpolation_indices(:)
     real(real64), allocatable :: zt_subspace(:, :)
 
-    integer :: i, np, ir, ic
+    ! Interpolation vectors
+    real(real64), allocatable :: theta(:, :), product_exact(:, :), product_isdf(:, :)
+    character(len=3) :: ij_char
+
+    integer :: i, np, ir, ic, ij
+
+    ! -----------------------------
+    ! Start of code
+    ! -----------------------------
 
     ! call mpi_init(ierr)
     ! comm = mpi_t(mpi_comm_world)
     comm = mpi_t()
 
-    use_centroids = .false.
+    use_centroids = .true.
 
     ! benzene
     species = ['C', 'C', 'C', 'C', 'C', 'C', 'H', 'H', 'H', 'H', 'H', 'H']
@@ -106,10 +119,11 @@ program run_isdf_serial
         call write_to_xyz('initial_centroids.xyz', dummy_species, centroids * bohr_to_ang)
         deallocate(dummy_species)
 
-        write(*,*)' Computing centroids with kmeans'
-        call weighted_kmeans(comm, grid, rho, centroids, niter, centroid_tol, verbose=.true.)
+        write(*,*) 'Computing centroids with kmeans'
+        call weighted_kmeans(comm, grid, rho, centroids, niter, centroid_tol, verbose=.false.)
         deallocate(rho)
-        call discretise_values_to_grid(centroids, grid)
+        allocate(centroid_indices(n_centroid))
+        call discretise_values_to_grid(centroids, grid, centroid_indices)
 
         ! Output final centroids for visualisation
         allocate(dummy_species(n_centroid), source='P')
@@ -117,17 +131,16 @@ program run_isdf_serial
         deallocate(dummy_species)
 
         ! Might be useful to code some measure of centroid choice.
-
         deallocate(centroids)
     endif
     ! --------------------------------------------------------------------
     ! Compute optimal interpolation points with QR decomposition 
     ! --------------------------------------------------------------------
 
-    ! Parse wave functions in packed form (n_states, np)
-    call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/wfs.out", .true., phi)
-
     if (.not. use_centroids) then
+        ! Parse wave functions in packed form (n_states, np)
+        call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/wfs.out", .true., phi)
+
         write(*, *) 'Compute optimal interpolation points using QR decomposition'
         ! 32 = sqrt(np) 
         n_centroid = 32   
@@ -153,24 +166,65 @@ program run_isdf_serial
         call write_to_xyz('qr_final_centroids.xyz', dummy_species, centroids * bohr_to_ang)
         deallocate(dummy_species)
         deallocate(centroids)
-      endif
+        deallocate(phi)
+    endif
 
     ! --------------------------------------------------------------------
     ! Compute interpolation vectors
     ! --------------------------------------------------------------------
+    deallocate(grid)
 
-    ! use interpolation vectors to expand the wave functions
+    ! Parse wave functions in packed form (np, n_states)
+    call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/wfs.out", .false., phi)
+    if (all(shape(phi) /= [np, n_states])) then
+      write(*, *) 'Expected phi in unpacked form for use in ISDF routines'
+      error stop
+    endif
+
+    ! ! Use interpolation vectors to expand the wave functions
+    write(*, *) 'Computing ISDF vectors'
+    call construct_interpolation_vectors(phi, centroid_indices, theta)
+
+    if (all(shape(theta) /= [np, n_centroid])) then
+      write(*, *) "Error with shape of returned Theta"
+      error stop
+    endif
+
+    write(*, *) 'Constructing approximate product of KS states using ISDF vectors'
+    call construct_approximation_product_states(theta, phi, phi, centroid_indices, product_isdf)
+    if (all(shape(product_isdf) /= [np, n_states * n_states])) then
+      write(*, *) "Error with shape of returned product_isdf"
+      error stop
+    endif
+    deallocate(theta)
+    deallocate(centroid_indices)
 
     ! Compute face-splitting product
+    write(*, *) 'Constructing exact product of KS functions using face-splitting product'
+    call face_splitting_product(phi, product_exact)
+    if (all(shape(product_exact) /= [np, n_states * n_states])) then
+      write(*, *) "Error with shape of returned product_exact"
+      error stop
+    endif
+    deallocate(phi)
 
     ! Output both for plotting
+    write(ij_char, '(I3)') n_states * n_states
+    write(*, *) 'Outputting '// ij_char //' product functions in cube format'
+
+    do ij = 1, n_states * n_states
+      write(ij_char, '(I3)') ij 
+      call output_cube('product_cubes/product_isdf_'//trim(adjustl(ij_char)), an, atomic_pos * ang_to_bohr, [10, 10, 10], &
+        spacings, grid(:, 1), product_isdf(:, ij))
+      call output_cube('product_cubes/product_exact'//trim(adjustl(ij_char)), an, atomic_pos * ang_to_bohr, [10, 10, 10], &
+        spacings, grid(:, 1), product_exact(:, ij))
+    enddo
 
     ! Compare both numerically
-
     ! Consider comparing to python result
 
-    deallocate(grid)
-    deallocate(phi)
     ! call MPI_Finalize(ierr)
+    deallocate(product_isdf)
+    deallocate(product_exact)
 
 end program run_isdf_serial
