@@ -9,6 +9,8 @@ program run_isdf_serial
     use grids_m,  only: discretise_values_to_grid
     use kmeans_m, only: weighted_kmeans
 
+    ! TODO(Alex) Cannot use maths_m from this file as the module name clashes with 
+    ! maths_m imported from the kmeans library. Extremely annoying
     ! Internal libs
     use face_splitting_m,       only: face_splitting_product
     use parse,                  only: write_to_xyz, output_cube, parse_grid_1d_from_c, parse_grid_2d_from_c
@@ -46,9 +48,11 @@ program run_isdf_serial
 
     ! Interpolation vectors
     real(real64), allocatable :: theta(:, :), product_exact(:, :), product_isdf(:, :)
-    character(len=3) :: ij_char
+    real(real64), allocatable :: error(:)
+    real(real64)              :: dv 
+    character(len=3)          :: ij_char
 
-    integer :: i, np, ir, ic, ij
+    integer :: i, np, ir, ic, ij, imax, imin
 
     ! -----------------------------
     ! Start of code
@@ -95,6 +99,7 @@ program run_isdf_serial
     spacings(1, 1) = grid(1, 2)  - grid(1, 1) 
     spacings(2, 2) = grid(2, 11) - grid(2, 10) 
     spacings(3, 3) = grid(3, 101) - grid(3, 100) 
+    dv = spacings(1, 1) * spacings(2, 2) * spacings(3, 3)
     call output_cube('density', an, atomic_pos * ang_to_bohr, [10, 10, 10], spacings, grid(:, 1), rho)
 
     ! --------------------------------------------------------------------
@@ -220,11 +225,82 @@ program run_isdf_serial
     enddo
 
     ! Compare both numerically
-    ! Consider comparing to python result
+    ! RMSE
+    allocate(error(n_states * n_states))
+    do ij = 1, n_states * n_states
+      error(ij) = sqrt(mean_square_error(product_isdf(:, ij), product_exact(:, ij), dv))
+    enddo
+
+    imax = maxloc(error, dim=1)
+    imin = minloc(error, dim=1)
+    write(*, *) 'Mean RMSE: ', sum(error) / real(n_states * n_states, real64)
+    write(*, *) 'Min RMSE found for state :', imin, error(imin)
+    write(*, *) 'Max RMSE found for state :', imax, error(imax)
+
+    ! Percentage error
+    error = 0._real64
+    do ij = 1, n_states * n_states
+      error(ij) = relative_error(product_isdf(:, ij), product_exact(:, ij))
+    enddo
+
+    imax = maxloc(error, dim=1)
+    imin = minloc(error, dim=1)
+    write(*, *) 'Mean relative error: ', sum(error) / real(n_states * n_states, real64)
+    write(*, *) 'Min relative error found for state :', imin, error(imin)
+    write(*, *) 'Max relative error found for state :', imax, error(imax)
 
     ! call MPI_Finalize(ierr)
     deallocate(grid)
     deallocate(product_isdf)
     deallocate(product_exact)
+    deallocate(error)
+
+contains
+
+function relative_error(x_ref, x) result(rel_err)
+  real(real64), intent(in) :: x_ref(:)
+  real(real64), intent(in) :: x(:)
+  real(real64) :: rel_err
+
+  integer :: n, i
+
+  n = size(x_ref)
+  if (n /= size(x)) then
+     write(*, *) 'Size of x_ref and x disagree'
+     error stop 
+  endif
+
+  rel_err = 0._real64
+  do i = 1, n
+    rel_err = rel_err + abs((x_ref(i) - x(i)) / x_ref(i))
+  enddo
+
+end function relative_error
+
+function mean_square_error(x, y, dv) result(mse)
+  real(real64), intent(in) :: x(:)
+  real(real64), intent(in) :: y(:)
+  real(real64), intent(in) :: dv   !< Volume element
+  real(real64) :: mse
+
+  integer :: n, i
+
+  n = size(x)
+  if (n /= size(y)) then
+     write(*, *) 'Size of x and y disagree'
+     error stop 
+  endif
+
+  mse = 0._real64
+
+  !$omp parallel do simd default(shared) reduction(+:mse)
+  do i = 1, n
+    mse = mse + (x(i) - y(i))**2._real64
+  enddo
+  !$omp end parallel do simd
+
+  mse = mse / dv
+
+end function mean_square_error
 
 end program run_isdf_serial
