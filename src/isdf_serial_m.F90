@@ -1,19 +1,17 @@
 !> ISDF non-MPI implementation
 module isdf_serial_m
     use, intrinsic :: iso_fortran_env, only: dp => real64
+    
+    use face_splitting_m,       only: face_splitting_product
     use maths_m, only: pseudo_inv
+
     implicit none
     private
 
-    public :: parse_set_of_states, construct_interpolation_vectors
+    public :: construct_interpolation_vectors, construct_approximation_product_states
 
 
 contains
-
-    !> @brief Parse a set of states from text file
-    subroutine parse_set_of_states()
-    end subroutine parse_set_of_states
-
 
     !> @brief Construct the quasi-density matrix, with index one defined for all grid points
     !! and index two only defined for interpolation points.
@@ -34,7 +32,7 @@ contains
         integer :: nintr     !< Number of interpolation vectors
         integer :: m_states  !< Number of KS states in the set \f$\{\varphi\}\f$
 
-        integer  :: i, ir, jr, iintr
+        integer  :: i, ir, jr, jintr
         real(dp) :: phi_jr
 
         np = size(phi, 1)
@@ -45,11 +43,11 @@ contains
         ! Implementation 1. Loop-based
         ! This could be extended to OMP. Perhaps targetting the inside loop over grid points.
         do i = 1, m_states
-            do iintr = 1, nintr
-                jr = indices(iintr)
+            do jintr = 1, nintr
+                jr = indices(jintr)
                 phi_jr = phi(jr, i)
                 do ir = 1, np
-                    P_phi(ir, jr) = phi(ir, i) * phi_jr
+                    P_phi(ir, jintr) = phi(ir, i) * phi_jr
                 enddo
             enddo
         enddo
@@ -210,6 +208,73 @@ contains
         deallocate(cct_inv)
 
     end subroutine construct_interpolation_vectors
+
+
+    !> @brief Approximate the product basis using ISDF vectors.
+    !!
+    !! \f[
+    !!     \varphi_i(\mathbf{r}) \psi_j(\mathbf{r}) 
+    !!       \approx \sum_{\mu=1}^{N_\mu} \zeta_\mu(\mathbf{r})\varphi_i(\mathbf{r}_\mu) \psi_j(\mathbf{r}_\mu)    
+    !! \f]
+    subroutine construct_approximation_product_states(theta, phi, psi, indices, z_approx)
+        real(dp), intent(in) :: theta(:, :)                  !< ISDF interpolation vectors of shape(Np, Nintr)
+        real(dp), intent(in) :: phi(:, :)                    !< KS states of shape (Np, m_states)
+        real(dp), intent(in) :: psi(:, :)                    !< KS states of shape (Np, n_states)
+        integer, intent(in)  :: indices(:)                   !< Indices of interpolation points
+        real(dp), allocatable, intent(out) :: z_approx(:, :) !< Approximate product basis 
+
+        integer :: np, m, n, nintr, i, ir, imu
+        real(dp), allocatable :: phi_intr(:, :), psi_intr(:, :), z_intr(:, :)
+
+        np = size(phi, 1)
+        m = size(phi, 2)
+        n = size(psi, 2)
+        nintr = size(theta, 2)
+
+        if (size(psi, 1) /= np) then
+            write(*, *) 'First dimension of psi inconsistent with phi'
+            error stop
+        endif
+
+        if (size(theta, 1) /= np) then
+            write(*, *) 'First dimension of theta inconsistent with phi'
+            error stop
+        endif
+
+        ! 1. Construct z_{ij}(r_\mu) by face-splitting \varphi_i(\mathbf{r}_\mu) and \psi_j(\mathbf{r}_\mu)    
+        ! a) Construct phi and psi at interpolation points (Nmu, n or m)
+        allocate(phi_intr(nintr, m))
+        !$omp parallel do simd collapse(2) default(shared) private(ir)
+        do i = 1, m
+            do imu = 1, nintr
+                ir = indices(i)
+                phi_intr(imu, i) = phi(ir, i)
+            enddo
+        enddo
+        !$omp end parallel do simd
+
+        allocate(psi_intr(nintr, n))
+        !$omp parallel do simd collapse(2) default(shared) private(ir)
+        do i = 1, n
+            do imu = 1, nintr
+                ir = indices(i)
+                psi_intr(imu, i) = psi(ir, i)
+            enddo
+        enddo
+        !$omp end parallel do simd
+
+        ! b) Face split
+        allocate(z_intr(nintr, n * m))
+        call face_splitting_product(phi_intr, psi_intr, z_intr)
+        deallocate(phi_intr)
+        deallocate(psi_intr)
+
+        ! 2. Contract Theta and Z_intr of shapes (np, Nmu) (Nmu, n * m) -> (np, n * m)
+        allocate(z_approx(np, n * m))
+        call dgemm ('N', 'N', np, n * m, nintr, 1._dp, theta, np, z_intr, nintr, 0._dp, z_approx, np)
+        deallocate(z_intr)
+
+    end subroutine construct_approximation_product_states
 
 
     ! ! @brief Convert P matrix from P(r, r_u) to P(r_v, r_u)
