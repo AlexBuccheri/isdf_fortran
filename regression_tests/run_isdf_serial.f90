@@ -172,7 +172,6 @@ program run_isdf_serial
     ! --------------------------------------------------------------------
     ! Compute interpolation vectors
     ! --------------------------------------------------------------------
-    deallocate(grid)
 
     ! Parse wave functions in packed form (np, n_states)
     call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/wfs.out", .false., phi)
@@ -224,6 +223,7 @@ program run_isdf_serial
     ! Consider comparing to python result
 
     ! call MPI_Finalize(ierr)
+    deallocate(grid)
     deallocate(product_isdf)
     deallocate(product_exact)
 
