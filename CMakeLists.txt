@@ -108,6 +108,7 @@ target_link_libraries(isdf_fortran PRIVATE
    $<$<BOOL:${MPI}>:MPI::MPI_Fortran> 
    common_flags 
    BLAS::BLAS 
+   kmeans::lib_kmeans 
    )
 
 # Location of source - added after defining library variables
@@ -140,10 +141,48 @@ add_executable(test_maths tests/test_maths_m.F90)
 target_link_libraries(test_maths PRIVATE isdf_fortran fortuno_wrapper common_flags) 
 add_test(NAME test_gram_schmidt COMMAND test_maths "Gram-Schmidt orthogonalisation")
 
+add_executable(test_isdf_serial tests/test_isdf_serial_m.F90)
+target_link_libraries(test_isdf_serial PRIVATE isdf_fortran fortuno_wrapper kmeans::lib_kmeans common_flags) 
+add_test(NAME test_quasi_density_matrix COMMAND test_isdf_serial "Test quasi-density matrix")
+
+add_executable(test_lapack_drivers tests/test_lapack_drivers_m.F90)
+target_link_libraries(test_lapack_drivers PRIVATE isdf_fortran fortuno_wrapper kmeans::lib_kmeans common_flags) 
+add_test(NAME test_pseudo_inverse COMMAND test_lapack_drivers "Test pseudo-inverse")
+add_test(NAME test_lu_inverse COMMAND test_lapack_drivers "Test LU inverse")
+
 
 # Application tests
 add_executable(run_isdf_serial regression_tests/run_isdf_serial.F90)
 target_link_libraries(run_isdf_serial PRIVATE 
-   isdf_fortran kmeans::lib_kmeans 
+   isdf_fortran 
+   kmeans::lib_kmeans 
    $<$<BOOL:${MPI}>:MPI::MPI_Fortran>  
    common_flags) 
+
+add_executable(run_isdf_from_inputs regression_tests/run_isdf_from_inputs.F90)
+target_link_libraries(run_isdf_from_inputs PRIVATE 
+   isdf_fortran 
+   kmeans::lib_kmeans 
+   $<$<BOOL:${MPI}>:MPI::MPI_Fortran>  
+   common_flags) 
+   
+# add_executable(run_face_splitting regression_tests/run_face_splitting.f90)
+# target_link_libraries(run_face_splitting PRIVATE isdf_fortran common_flags) 
+
+# add_executable(run_isdf_from_oct regression_tests/run_isdf_from_oct.f90)
+# target_link_libraries(run_isdf_from_oct PRIVATE 
+#    isdf_fortran 
+#    kmeans::lib_kmeans 
+#    common_flags) 
+# target_sources(run_isdf_from_oct PRIVATE
+#    regression_tests/helpers.F90
+#    )
+      
+add_executable(isdf_components regression_tests/isdf_components.f90)
+target_link_libraries(isdf_components PRIVATE 
+   isdf_fortran
+   BLAS::BLAS 
+   common_flags) 
+target_sources(isdf_components PRIVATE
+   regression_tests/helpers.F90
+   )

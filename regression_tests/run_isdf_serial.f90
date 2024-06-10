@@ -108,7 +108,7 @@ program run_isdf_serial
     if (use_centroids) then
         niter = 100
         ! 32 = sqrt(np) 
-        n_centroid = 32   
+        n_centroid = 100 !32 was the original number used. Increasing to 64 massively reduces the max error
         allocate(centroids(3, n_centroid), init_centroid_indices(n_centroid))
 
         ! Set seed to fix random number generation, for testing    
@@ -155,7 +155,9 @@ program run_isdf_serial
         allocate(seed(min_seed_size), source=[(i, i=1, min_seed_size)])
 
         call subsample_transpose_product_matrix(phi, n_centroid, zt_subspace, random_seed=seed)
+        write(*, *) 'Updated the number of centroids to', n_centroid
         allocate(interpolation_indices(n_centroid))
+        write(*, *) 'Performing QR decomposition'
         call qr_decomposition_with_pivot(zt_subspace, interpolation_indices, preserve_A=.false.)
         deallocate(zt_subspace)
 
@@ -178,14 +180,14 @@ program run_isdf_serial
     ! Compute interpolation vectors
     ! --------------------------------------------------------------------
 
-    ! Parse wave functions in packed form (np, n_states)
+    ! Parse wave functions in unpacked form (np, n_states)
     call parse_grid_2d_from_c(trim(root) // "/regression_tests/input/wfs.out", .false., phi)
     if (all(shape(phi) /= [np, n_states])) then
       write(*, *) 'Expected phi in unpacked form for use in ISDF routines'
       error stop
     endif
 
-    ! ! Use interpolation vectors to expand the wave functions
+    ! Use interpolation vectors to expand the wave functions
     write(*, *) 'Computing ISDF vectors'
     call construct_interpolation_vectors(phi, centroid_indices, theta)
 
@@ -275,6 +277,8 @@ function relative_error(x_ref, x) result(rel_err)
     rel_err = rel_err + abs((x_ref(i) - x(i)) / x_ref(i))
   enddo
 
+  rel_err = rel_err / real(n, real64)
+
 end function relative_error
 
 function mean_square_error(x, y, dv) result(mse)
@@ -299,7 +303,7 @@ function mean_square_error(x, y, dv) result(mse)
   enddo
   !$omp end parallel do simd
 
-  mse = mse / dv
+  mse = mse * dv
 
 end function mean_square_error
 
