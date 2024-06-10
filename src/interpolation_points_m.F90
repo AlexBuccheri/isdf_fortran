@@ -3,7 +3,7 @@ module interpolation_points_m
     use, intrinsic :: iso_fortran_env
 
     use face_splitting_m, only: face_splitting_product, face_splitting_product_two_funcs_colwise
-    use maths_m,          only: modified_gram_schmidt, gram_schmidt, all_close
+    use isdf_maths_m,          only: modified_gram_schmidt, gram_schmidt, all_close
     implicit none
     private
     public :: subsample_transpose_product_matrix
@@ -43,6 +43,7 @@ contains
         ! Orthogonalise columns of gaussian
         !call modified_gram_schmidt(gaussian)
         !write(*, *) 'Gaussian columns orthogonalised'
+        write(*, *) 'Not orthogonalising random Gaussian matrix'
 
         ! -------------------------------------------------------------------
         ! Check it is orthogonalised
@@ -127,31 +128,28 @@ contains
         endif
 
         ! Contract G and phi matrices to have shape (p, np): 
-        ! Arrays:  G_phi =     G     phi
+        ! Arrays:  G_phi =    G1     phi
         ! Shapes: (p, np) = (p, m) (m, np)
-        allocate(G_phi(np, p))
+        allocate(G_phi(p, np))
         call dgemm('N', 'N', &
-            p,             &  ! row op(G)
+            p,             &  ! row op(G1)
             np,            &  ! col op(phi)    
-            m_states,      &  ! col op(G)
+            m_states,      &  ! col op(G1)
             1._real64,     &       
             G1, p,         &
             phi, m_states, &
             0._real64,     &
-            G_phi, np      &
+            G_phi, p       &
         )      
 
         ! Z^T_subspace = Face-splitting product (G_phi) (G_phi) to give shapes:
         ! (p*p, np) = (p, np) ^ (p, np)
+        write(*, *) 'Face-split zt_subspace = G_phi ^ G_phi'
         n_interp = p * p
-        allocate(zt_subspace(n_interp, np))
-        call face_splitting_product_two_funcs_colwise(phi, zt_subspace)
-
+        call face_splitting_product_two_funcs_colwise(G_phi, zt_subspace)
+        write(*, *) 'Shape of zt_subspace (n_interp, np)', shape(zt_subspace)
 
     end subroutine subsample_transpose_product_matrix
-
-
-
 
 
 end module interpolation_points_m
