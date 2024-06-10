@@ -2,13 +2,19 @@
 module isdf_serial_m
     use, intrinsic :: iso_fortran_env, only: dp => real64
     
-    use face_splitting_m,       only: face_splitting_product
-    use maths_m, only: pseudo_inv
+    use face_splitting_m, only: face_splitting_product
+    use lapack_drivers_m, only: inversion_lu, pseudo_inv
 
     implicit none
     private
 
-    public :: construct_interpolation_vectors, construct_approximation_product_states
+    public :: construct_interpolation_vectors, construct_approximation_product_states, &
+        construct_quasi_density_matrix_R_intr, &
+        construct_quasi_density_matrix_R_intr_alt, &
+        select_interpolation_points_of_first_dim, &
+        construct_approx_product_states_summing, &
+        construct_zct, &
+        construct_inverse_coefficients_contraction
 
 
 contains
@@ -40,22 +46,62 @@ contains
         nintr = size(indices)
         allocate(P_phi(np, nintr))
 
-        ! Implementation 1. Loop-based
-        ! This could be extended to OMP. Perhaps targetting the inside loop over grid points.
         do i = 1, m_states
             do jintr = 1, nintr
                 jr = indices(jintr)
                 phi_jr = phi(jr, i)
                 do ir = 1, np
-                    P_phi(ir, jintr) = phi(ir, i) * phi_jr
+                    P_phi(ir, jintr) = P_phi(ir, jintr) + phi(ir, i) * phi_jr
                 enddo
             enddo
         enddo
 
-        ! TODO. Explore more efficient implementations
-        ! This is, after all, just an element-wise product
-
     end subroutine construct_quasi_density_matrix_R_intr
+
+
+    !> This routine instead constructs P_imu,i at the expense of storing ninterpolation * m_state elements
+    !! then performs a contraction over the states to define P^{\varphi}(\mathbf{r}, \mathbf{r}_\mu)
+    subroutine construct_quasi_density_matrix_R_intr_alt(phi, indices, P_phi)
+        real(dp), intent(in)               :: phi(:, :)       !< A set of states defined on real-space grid
+        !                                                        of shape (np, m_states)
+        integer,  intent(in)               :: indices(:)      !< Indices of interpolation grid points
+        real(dp), intent(out), allocatable :: P_phi(:, :)     !< Quasi-density matrix
+
+        real(dp), allocatable :: phi_intr(:, :)  !< KS states, only defined at interpolation points
+        integer :: np                             !< Number of grid points
+        integer :: nintr                          !< Number of interpolation vectors
+        integer :: m_states                       !< Number of KS states in the set \f$\{\varphi\}\f$
+
+        integer :: i, iintr, ir
+
+        np = size(phi, 1)
+        m_states = size(phi, 2)
+        nintr = size(indices)
+
+        ! Construct the density matrix, defined only for interpolation points
+        allocate(phi_intr(nintr, m_states))
+        do i = 1, m_states
+            do iintr = 1, nintr
+                ir = indices(iintr)
+                phi_intr(iintr, i) = phi(ir, i)
+            enddo
+        enddo
+
+        ! Contract over the state index, P = phi @ phi_intr^T
+        allocate(P_phi(np, nintr))
+        call dgemm ('N', 'T',   &
+            size(phi, 1),       & ! size(op(A), 1)
+            nintr,              & ! size(C, 2)
+            size(phi, 2),       & ! size(op(A), 2)
+            1._dp,              & ! alpha
+            phi, np,            & ! A and LDA
+            phi_intr, nintr,    & ! B and LDB
+            0._dp,              & ! beta
+            P_phi, np           & ! C and LDC
+            )
+        deallocate(phi_intr)
+
+    end subroutine construct_quasi_density_matrix_R_intr_alt
 
 
     !> @brief Construct the product of quasi-density matrices, with index one defined for all grid points
@@ -79,7 +125,7 @@ contains
         endif
 
         if (all(shape(P_phi_ii) /= [nintr, nintr])) then
-            write(*, *) 'Size of density matrix should be (nintr, nintr)'
+            write(*, *) 'Size of density matrix should be (nintr, nintr), but is', shape(P_phi_ii)
             error stop 102
         endif
 
@@ -128,14 +174,62 @@ contains
         do j = 1, nintr
             do i = 1, nintr
                 cct(i, j) = P_phi(i, j) * P_psi(i, j)
+                ! TEMP: Return CC^T instead of the inverse of CC^T
+                cct_inv(i, j) = cct(i, j)
             enddo
         enddo
         !$omp end parallel do simd
 
-        call pseudo_inv(cct, cct_inv)
-        deallocate(cct)
+        !write(*, *) 'Inverting CC^T using LU decomposition'
+        !call inversion_lu(cct, cct_inv)
+        ! write(*, *) 'Inverting CC^T using SVD'
+        ! call pseudo_inv(cct, cct_inv)
+
+        ! deallocate(cct)
 
     end subroutine construct_inverse_coefficients_contraction
+
+
+    !> @brief Construct the product of Z and coefficient matrices
+    !! from the element-wise product of density matrices.
+    subroutine construct_zct(P_phi_r_mu, ZCT, P_psi_r_mu)
+        real(dp), intent(in), target :: P_phi_r_mu(:, :)  !< Density matrix for states {\phi}
+        real(dp), intent(out) :: ZCT(:, :)
+        real(dp), intent(in), optional, target :: P_psi_r_mu(:, :)  !< Density matrix for states {\psi}
+
+        real(dp), pointer :: P_psi(:, :)
+
+        integer :: i_mu, ir, np, nintr
+
+        if (all(shape(P_phi_r_mu) /= shape(ZCT))) then
+            write(*, *) 'Shape of P^phi_{r,mu} /= shape(ZC^T)'
+            error stop
+        endif
+
+        if (present(P_psi_r_mu)) then
+            if (all(shape(P_psi_r_mu) /= shape(ZCT))) then
+                write(*, *) 'Shape of P^psii_{r,mu} /= shape(ZC^T)'
+                error stop
+            endif
+            P_psi => P_psi_r_mu
+        else
+            P_psi => P_phi_r_mu
+        endif
+
+        np = size(ZCT, 1)
+        nintr = size(ZCT, 2)
+
+        !$omp parallel do simd collapse(2) default(shared)
+        do i_mu = 1, nintr
+            do ir = 1, np
+                ZCT(ir, i_mu) = P_phi_r_mu(ir, i_mu) * P_psi(ir, i_mu)
+            end do
+        enddo
+        !$omp end parallel do simd
+
+        nullify(P_psi)
+
+    end subroutine construct_zct
 
 
     !> @brief Construct a matrix of ISDF interpolation vectors, \f$\mathbf{\Theta}\f$.
@@ -170,40 +264,54 @@ contains
         ! Work arrays, where r = realspace point and i=interpolation point (k amd mu/nu in the paper)
         integer                :: np, nintr, ir, iintr
         real(dp),  allocatable :: P_phi_ri(:, :), P_phi_ii(:, :)
-        real(dp),  allocatable :: ZCT(:, :), cct_inv(:, :)
+        real(dp),  allocatable :: ZCT(:, :), cct(:, :), cct_inv(:, :)
 
         ! Allocate interpolation vectors matrix
         np = size(phi, 1)
         nintr = size(indices)
 
         ! 1. Quasi density matrix
+        write(*, *) 'Constructing density matrix'
         call construct_quasi_density_matrix_R_intr(phi, indices, P_phi_ri)
  
         ! 2. Construct CC^T
         ! a) Convert P(r, r_u) -> P(r_v, r_u)
+        ! TODO(Alex) Should change some of this notation from i(nterpolation) to mu, nu
+        write(*, *) 'Convert P to interpolation points only'
         allocate(P_phi_ii(nintr, nintr))
         call select_interpolation_points_of_first_dim(P_phi_ri, indices, P_phi_ii)
         
         ! b) Contract CC^T (element-wise multiply P_phi_ii and P_phi_ii), and invert
-        allocate(cct_inv(nintr, nintr))
-        call construct_inverse_coefficients_contraction(P_phi_ii, P_phi_ii, cct_inv)
+        write(*, *) 'Construct and invert CC^T'
+        allocate(cct(nintr, nintr), cct_inv(nintr, nintr))
+        call construct_inverse_coefficients_contraction(P_phi_ii, P_phi_ii, cct)
+        ! TODO Alex. Note that inversion is commented out in `construct_inverse_coefficients_contraction`
+        ! so returning cct here
+        write(*, *) 'Inverting CC^T using LU decomposition'
+        call inversion_lu(cct, cct_inv)
+        deallocate(cct)
         deallocate(P_phi_ii)
 
-        ! 3. Construct theta = (ZC^T)(CC^T)^{-1} == [P_phi_ri * P_psi_ri] * [P_phi_ii * P_psi_ii]^{-1}
+        ! 3. Construct theta = (ZC^T)(CC^T)^{-1} == [P_phi_ri * P_psi_ri] @ [P_phi_ii * P_psi_ii]^{-1}
         ! a) (ZC^T) == [P_phi_ri * P_psi_ri] i.e. Element-wise multiplication
+        write(*, *) 'Construct ZC^T'
         allocate(ZCT(np, nintr))
-        !$omp parallel do simd collapse(2) default(shared)
-        do iintr = 1, nintr
-            do ir = 1, np
-                ZCT(ir, iintr) = P_phi_ri(ir, iintr) * P_phi_ri(ir, iintr)
-            end do
-        enddo
-        !$omp end parallel do simd
+        call construct_zct(P_phi_ri, ZCT)
         deallocate(P_phi_ri)
 
         ! b) Contract (ZC^T) with (CC^T)^{-1}
+        write(*, *) 'Contract (ZC^T) (CC^T)^{-1}'
         allocate(theta(np, nintr))
-        call dgemm ('N', 'N', np, nintr, nintr, 1._dp, ZCT, np, cct_inv, nintr, 0._dp, theta, np)
+        call dgemm ('N', 'N', &
+            np, &    ! row(ZCT)
+            nintr, & ! col(cct_inv)
+            nintr, & ! col(ZCT)
+            1._dp, & ! alpha
+            ZCT, np, & !LDA
+            cct_inv, nintr, &  ! LDB
+            0._dp, &  ! beta
+            theta, np &  ! LDC
+            )
         deallocate(ZCT)
         deallocate(cct_inv)
 
@@ -245,24 +353,24 @@ contains
         ! 1. Construct z_{ij}(r_\mu) by face-splitting \varphi_i(\mathbf{r}_\mu) and \psi_j(\mathbf{r}_\mu)    
         ! a) Construct phi and psi at interpolation points (Nmu, n or m)
         allocate(phi_intr(nintr, m))
-        !$omp parallel do simd collapse(2) default(shared) private(ir)
+!        !$omp parallel do simd collapse(2) default(shared) private(ir)
         do i = 1, m
             do imu = 1, nintr
-                ir = indices(i)
+                ir = indices(imu)
                 phi_intr(imu, i) = phi(ir, i)
             enddo
         enddo
-        !$omp end parallel do simd
+ !       !$omp end parallel do simd
 
         allocate(psi_intr(nintr, n))
-        !$omp parallel do simd collapse(2) default(shared) private(ir)
+!        !$omp parallel do simd collapse(2) default(shared) private(ir)
         do i = 1, n
             do imu = 1, nintr
-                ir = indices(i)
+                ir = indices(imu)
                 psi_intr(imu, i) = psi(ir, i)
             enddo
         enddo
-        !$omp end parallel do simd
+ !       !$omp end parallel do simd
 
         ! b) Face split
         allocate(z_intr(nintr, n * m))
@@ -272,10 +380,53 @@ contains
 
         ! 2. Contract Theta and Z_intr of shapes (np, Nmu) (Nmu, n * m) -> (np, n * m)
         allocate(z_approx(np, n * m))
-        call dgemm ('N', 'N', np, n * m, nintr, 1._dp, theta, np, z_intr, nintr, 0._dp, z_approx, np)
+        call dgemm ('N', 'N', &
+            np, &    !row(theta)
+            n * m, & ! col(z_intr)
+            nintr, & ! col(theta)
+            1._dp, &
+            theta, np, &
+            z_intr, nintr, &
+            0._dp, &
+            z_approx, np &
+            )
         deallocate(z_intr)
 
     end subroutine construct_approximation_product_states
+
+
+    subroutine construct_approx_product_states_summing(theta, phi, indices, z_approx)
+        real(dp), intent(in) :: theta(:, :)                  !< ISDF interpolation vectors of shape(Np, Nintr)
+        real(dp), intent(in) :: phi(:, :)                    !< KS states of shape (Np, m_states)
+        integer, intent(in)  :: indices(:)                   !< Indices of interpolation points
+        real(dp), allocatable, intent(out) :: z_approx(:, :) !< Approximate product basis 
+
+        integer :: np, m, nintr, r, i, j, ij, ir, i_mu
+        real(dp) :: phi_mu_i, phi_mu_j
+
+        np = size(phi, 1)
+        m = size(phi, 2)
+        nintr = size(theta, 2)
+
+        allocate(z_approx(np, m * m))
+
+        ! NOTE, the order of i and j matters iff phi /= psi
+        ij = 0
+        do i = 1, m
+            do j = 1, m
+                ij = ij + 1
+                do i_mu = 1, nintr
+                    r = indices(i_mu)
+                    phi_mu_i = phi(r, i)
+                    phi_mu_j = phi(r, j)
+                    do ir = 1, np
+                        z_approx(ir, ij) = z_approx(ir, ij) + theta(ir, i_mu) * phi_mu_i * phi_mu_j
+                    enddo
+                enddo
+            enddo
+        enddo
+
+    end subroutine construct_approx_product_states_summing
 
 
     ! ! @brief Convert P matrix from P(r, r_u) to P(r_v, r_u)
