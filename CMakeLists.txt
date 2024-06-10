@@ -178,7 +178,7 @@ target_link_libraries(run_isdf_from_inputs PRIVATE
 #    regression_tests/helpers.F90
 #    )
       
-add_executable(isdf_components regression_tests/isdf_components.f90)
+add_executable(isdf_components benzene_from_python/isdf_components.f90)
 target_link_libraries(isdf_components PRIVATE 
    isdf_fortran
    BLAS::BLAS 
