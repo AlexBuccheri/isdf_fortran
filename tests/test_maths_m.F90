@@ -2,7 +2,7 @@ program test_maths_m
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use omp_lib
     use fortuno_interface_m, only: execute_cmd_app, test, check, is_equal
-    use maths_m
+    use isdf_maths_m
 
     implicit none
 

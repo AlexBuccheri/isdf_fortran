@@ -1,14 +1,16 @@
-module maths_m
+module isdf_maths_m
    use, intrinsic :: iso_fortran_env, only: dp => real64
    implicit none
    private
 
    ! Exposed routines and functions
-   public :: close, all_close, pseudo_inv, svd, gram_schmidt, modified_gram_schmidt
+   public :: close, all_close, gram_schmidt, modified_gram_schmidt, construct_sin_basis_with_grid
 
    interface all_close
       module procedure :: all_close_real64_1d, all_close_real64_2d
    end interface all_close
+
+   real(dp), parameter :: pi = 3.14159265359_dp
 
 contains
 
@@ -90,112 +92,6 @@ contains
       all_close_real64_2d = all(values_close)
 
    end function all_close_real64_2d
-
-
-   !> @brief Compute pseudo-inv with SVD
-   ! TODO(Alex) See if A is preserved.
-   subroutine pseudo_inv(A, A_inv)
-      real(dp), intent(in)   :: A(:, :)
-      real(dp), intent(out)  :: A_inv(:, :)
-
-      real(dp), allocatable :: u(:, :), S(:), vt(:, :) !< Result of SVD on A
-      real(dp), allocatable :: s_inv(:, :)             !< inverse of the diagonals of S
-      real(dp), allocatable :: VSi(:, :)               !< Contraction of V and inverse(S)
-      integer :: i, m, n
-
-      call svd(A, U, S, VT)
-
-      ! Compute inverse of A: A^+ = V S^+ U^T
-      m = size(A, 1)
-      n = size(A, 2)
-
-      ! Invert the diagonals of S, to give S^+
-      ! TODO. Look into refactoring to see if I can use a vector instead of a diagonal matrix
-      allocate (s_inv(n, m), source=0._dp)
-      do i = 1, size(s, 1)
-         s_inv(i, i) = 1._dp/s(i)
-      end do
-      deallocate (S)
-
-      ! Contract (V S^+) = VS
-      allocate (VSi(n, n))
-      call dgemm('T', 'N', &
-                 size(VT, 2), &  ! Rows of op(A). op(A) = V
-                 size(s_inv, 2), &  ! Cols of op(B). op(B) = s_inv
-                 size(VT, 1), &  ! Cols of op(A)
-                 1._dp, &
-                 VT, &
-                 size(VT, 1), &  ! Rows of A
-                 s_inv, &
-                 size(s_inv, 1), &  ! Rows of B
-                 0._dp, &
-                 VSi, n)            ! Rows of C
-      deallocate (VT)
-
-      ! Contract A_inv = (V S^+) U^T
-      call dgemm('N', 'T', &
-                 size(VSi, 1), &    ! Rows of op(A). op(A) = VSi
-                 size(U, 1), &    ! Cols of op(B). op(B) = U^T
-                 size(VSi, 2), &    ! Cols of op(A)
-                 1._dp, &
-                 VSi, &
-                 size(VSi, 1), &    ! Rows of A
-                 U, &
-                 size(U, 1), &    ! Rows of B
-                 0._dp, &
-                 A_inv, m)          ! Rows of C
-
-      deallocate (VSi)
-      deallocate (U)
-
-   end subroutine pseudo_inv
-
-
-   !> @brief SVD wrapper
-   !!
-   !! Workspace query size taken from:
-   !! https://github.com/numericalalgorithmsgroup/LAPACK_Examples/blob/master/examples/source/dgesvd_example.f90
-   subroutine svd(A, U, S, VT)
-      real(dp), intent(in)  :: A(:, :)
-      real(dp), allocatable, intent(out) :: u(:, :)  !< U matrix
-      real(dp), allocatable, intent(out) :: S(:)     !<  min(m,n) singular values of A
-      real(dp), allocatable, intent(out) :: vt(:, :) !< V^T
-
-      real(dp), allocatable :: work(:)
-      real(dp) :: dummy(1, 1)
-      integer, parameter :: nb = 64
-      integer :: m, n, lda, ldu, ldvt, info, lwork
-
-      !                     A    =     U       S       VT
-      ! with shape:       (m,n)  =  (m, m)  (m, n)   (n, n)
-      ! which reduces to: (m,n)  =  (m, m) min(m, n) (n, n)
-      ! if S is represented as a vector.
-      m = size(A, 1)
-      n = size(A, 2)
-      lda = m
-      ldu = m
-      ldvt = n
-
-      allocate (s(min(m, n)))
-      allocate (u(ldu, m))
-      allocate (vt(ldvt, n))
-
-      ! Query optimal work space
-      lwork = -1
-      call dgesvd('A', 'S', m, n, A, lda, s, u, ldu, vt, ldvt, dummy, lwork, info)
-
-      ! Compute the singular values and left and right singular vectors of A.
-      lwork = max(m + 4*n + nb*(m + n), nint(dummy(1, 1)))
-      allocate (work(lwork))
-      call dgesvd('A', 'S', m, n, A, lda, s, u, ldu, vt, ldvt, work, lwork, info)
-
-      if (info /= 0) then
-         write (*, *) 'Failure in DGESVD. INFO =', info
-      end if
-
-      deallocate (work)
-
-   end subroutine svd
 
 
    !>@brief Sum of the projection of vector v_i onto a set of vectors {u}.
@@ -303,4 +199,81 @@ contains
 
    end subroutine modified_gram_schmidt
 
-end module maths_m
+
+   ! subroutine construct_sin_basis(n_points, origin, end, sin_pns, func)
+   !    integer,  intent(in)  :: n_points(:)  !> Points per dimension
+   !    real(dp), intent(in)  :: end(:)       !> Limits
+   !    real(dp), intent(in)  :: origin(:)    !> Origin
+   !    integer,  intent(in)  :: sin_pns(:)   !> Principal numbers for each sin function
+   !    real(dp), intent(out) :: func(:)      !> Product of sins on the grid
+
+   !    integer :: nx, ny, nz, ix, iy, iz, n, m, l, ir
+   !    real(dp) :: x, y, z, x0, y0, z0, dx, dy, dz, Lx, Ly, Lz
+
+   !    nx = n_points(1)
+   !    ny = n_points(2)
+   !    nz = n_points(3)
+
+   !    x0 = origin(1)
+   !    y0 = origin(2)
+   !    z0 = origin(3)
+
+   !    Lx = (end(1) - x0) 
+   !    Ly = (end(2) - y0) 
+   !    Lz = (end(3) - z0)
+
+   !    ! Assumes end point is included 
+   !    dx = Lx / real(nx - 1, dp)
+   !    dy = Ly / real(ny - 1, dp)
+   !    dz = Lz / real(nz - 1, dp)
+
+   !    n = sin_pns(1)
+   !    m = sin_pns(2)
+   !    l = sin_pns(3)
+
+   !    ir = 0
+   !    do iz = 1, nz
+   !       z = z0 + (iz - 1) * dz
+   !       do iy = 1, ny
+   !          y = y0 + (iy - 1) * dy
+   !          do ix = 1, nx
+   !             x = x0 + (ix - 1) * dx
+   !             ir = ir + 1
+   !             func(ir) = sin(n * pi * x / Lx) * sin(m * pi * y / Ly) * sin(l * pi * z / Lz)
+   !          enddo
+   !       enddo
+   !    enddo
+
+   ! end subroutine construct_sin_basis
+
+
+   ! Assumes that the grid is stored in a cartesian format
+   subroutine construct_sin_basis_with_grid(grid, sin_pns, func)
+      real(dp), intent(in)  :: grid(:, :)   !> Cartesian grid
+      integer,  intent(in)  :: sin_pns(:)   !> Principal numbers for each sin function
+      real(dp), intent(out) :: func(:)      !> Product of sins on the grid
+
+      integer :: n, m, l, ir, np
+      real(dp) :: x, y, z, Lx, Ly, Lz
+
+      ! Assumes first grid point is the origin corner, and the last grid point is the further corner
+      ! from the initial point
+      np = size(grid, 2)
+      Lx = grid(1, np) - grid(1, 1)
+      Ly = grid(2, np) - grid(2, 1)
+      Lz = grid(3, np) - grid(3, 1)
+
+      n = sin_pns(1)
+      m = sin_pns(2)
+      l = sin_pns(3)
+
+      do ir = 1, np
+         x = grid(1, ir)
+         y = grid(2, ir)
+         z = grid(3, ir)
+         func(ir) = sin(n * pi * x / Lx) * sin(m * pi * y / Ly) * sin(l * pi * z / Lz)
+      enddo
+
+   end subroutine construct_sin_basis_with_grid
+
+end module isdf_maths_m
