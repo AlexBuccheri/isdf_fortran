@@ -7,3 +7,10 @@
 /.idea
 # Fortran outputs i.e. write(101, *) ...
 fort.*
+# Python files
+__pycache__
+
+/product_cubes
+/outputs
+/SORT
+.DS_Store
