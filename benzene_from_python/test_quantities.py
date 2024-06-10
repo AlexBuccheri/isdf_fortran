@@ -1,8 +1,13 @@
 """ Compare quantities output from fortran ISDF code to python references,
 for fixed simulation parameters on benzene.
 
+For use in the CI:
+export CMAKE_BUILD_DIR=relative/build_directory 
+
+Run the test:
 pytest -s benzene_from_python/test_quantities.py
 """
+import os
 from pathlib import Path
 import pytest
 import numpy as np
@@ -10,14 +15,18 @@ import subprocess
 import shutil
 
 
-# TODO(Alex) Need to make this dynamic, but can vary w.r.t. which directory the script is run from
-@pytest.fixture(scope="module")
-def project_root():
-    return Path("/Users/alexanderbuccheri/Codes/isdf_fortran")
-
 @pytest.fixture(scope="module")
 def test_binary(project_root: Path):
-    return project_root / "serial-cmake-build-debug/isdf_components"
+    build_dir = os.environ.get('CMAKE_BUILD_DIR', None)
+    if build_dir:
+        print('\nBuild directory set by environment variable $CMAKE_BUILD_DIR')
+    else:
+        print('\nBuild directory using hard-coded default')
+        build_dir = 'serial-cmake-build-debug'
+
+    build_dir = Path(build_dir)
+    print(f'Build directory: {build_dir.as_posix()}')
+    return project_root / build_dir / "isdf_components"
 
 @pytest.fixture(scope="module")
 def test_root(project_root: Path):
@@ -39,7 +48,7 @@ def output_root(test_root: Path):
 @pytest.fixture(scope="module")
 def run_isdf_binary(test_binary: Path, output_root: Path):
     try:
-        print('\nRunning ', test_binary.as_posix())
+        print('Running ', test_binary.as_posix())
         result = subprocess.run(
             [test_binary],
             stdout=subprocess.PIPE,
@@ -52,16 +61,14 @@ def run_isdf_binary(test_binary: Path, output_root: Path):
 
     except subprocess.CalledProcessError as e:
         shutil.rmtree(output_root)
-        print(f"Subprocess failed with code {e.returncode}")
-        print(e.stderr)
-        assert False
-        # yield subprocess.CalledProcessError(f"Subprocess failed with code {e.returncode}", 
-        #     e.returncode, 
-        #     e.stdout, 
-        #     e.stderr)
+        # Rather than yield an error to assert per test, raise the exception  
+        raise subprocess.CalledProcessError(f"Subprocess failed with code {e.returncode}", 
+            e.returncode, 
+            e.stdout, 
+            e.stderr)
 
     # Clean up after yielding
-    print("Removing ", output_root.as_posix())
+    print("\nRemoving ", output_root.as_posix())
     shutil.rmtree(output_root)
 
 

@@ -1,0 +1,5 @@
+jupyter
+notebook
+numpy
+pytest
+ipykernel
